@@ -225,4 +225,25 @@ app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filter
 # группа: ответы админов reply
 app.add_handler(MessageHandler(filters.Chat(chat_id=ADMIN_CHAT_ID) & filters.TEXT, admin_reply_router))
 
-app.run_polling()
+приложение.add_handler(MessageHandler(фильтры.Chat(chat_id=ADMIN_CHAT_ID) & фильтры.ТЕКСТ, admin_reply_router))
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import os
+
+def run_bot():
+    приложение.run_polling()
+
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+def run_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("", port), DummyHandler)
+    server.serve_forever()
+
+if __name__ == "__main__":
+    threading.Thread(target=run_bot).start()
+    run_server()
