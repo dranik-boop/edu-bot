@@ -201,6 +201,10 @@ async def admin_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 # ====== HTTP для Render Web Service ======
 class DummyHandler(BaseHTTPRequestHandler):
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
