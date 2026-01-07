@@ -106,6 +106,7 @@ def admin_menu() -> InlineKeyboardMarkup:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return
+
     context.user_data["awaiting_ticket"] = False
     await update.message.reply_text(TEXT_WELCOME, reply_markup=main_menu())
 
@@ -158,7 +159,10 @@ async def private_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
     context.user_data["awaiting_ticket"] = False
-    await update.message.reply_text(f"Принято. Номер обращения: #ref{r}")
+await update.message.reply_text(
+    f"Принято. Номер обращения: #ref{r}",
+    reply_markup=main_menu()
+)
 
 # ====== Группа админов: reply-ответ ======
 async def admin_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
