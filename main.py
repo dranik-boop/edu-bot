@@ -2,7 +2,10 @@ import os
 import json
 import random
 import re
+import threading
 from pathlib import Path
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -19,7 +22,7 @@ ADMIN_CHAT_ID = -1003565334153  # твоя админ-группа
 DATA_FILE = Path("tickets.json")
 REF_RE = re.compile(r"#ref(\d{4,10})", re.IGNORECASE)
 
-# ====== ТЕКСТЫ (их легко править) ======
+# ====== ТЕКСТЫ ======
 TEXT_WELCOME = (
     "Привет, на связи команда Нации Лидеров! Выберите подходящий раздел.\n\n"
     "Если инструкции не помогли или вы хотите поделиться с нами важной информацией — нажмите «Написать админу»."
@@ -30,9 +33,12 @@ TEXT_INSTRUCTIONS = (
     "Возможно, вы уже регистрировались на нашей платформе раньше. \n\n"
     "Попробуйте пройти через функцию «Забыли пароль?»: \n"
     "• Перейти по ссылке  https://school365edu.org/login/forgot_password.php \n"
-    "• В поле <Email> введите адрес электронной почты, на которую пытались зарегистрироваться. Обратите внимание: если поле <Логин> автоматически заполнилось - удалите из него все данные, должно быть заполнено только поле <Email> \n"
-     "• Нажмите кнопку <Найти> \n"
-     "• Если вы регистрировались ранее на платформе, то на указанный вами адрес электронной почты придет письмо со ссылкой для восстановления пароля \n"
+    "• В поле <Email> введите адрес электронной почты, на которую пытались зарегистрироваться. "
+    "Обратите внимание: если поле <Логин> автоматически заполнилось - удалите из него все данные, "
+    "должно быть заполнено только поле <Email> \n"
+    "• Нажмите кнопку <Найти> \n"
+    "• Если вы регистрировались ранее на платформе, то на указанный вами адрес электронной почты "
+    "придет письмо со ссылкой для восстановления пароля \n"
     "• Если e-mail не найден - нажмите «Назад в Меню» --> «✉️ Написать админу»"
 )
 
@@ -46,7 +52,8 @@ TEXT_ADMIN_PROMPT = (
     "✉️ Написать админу\n\n"
     "Пожалуйста, опишите проблему. По возможности, приложите скриншоты.\n"
     "Я передам информацию в админ-чат.\n"
-    "Обратите внимание: ответ администратора будет дан в рабочее время (в будние дни с 10:00 до 18:00 по центральному европейскому времени)"
+    "Обратите внимание: ответ администратора будет дан в рабочее время "
+    "(в будние дни с 10:00 до 18:00 по центральному европейскому времени)"
 )
 
 TEXT_NOT_IN_MODE = (
@@ -89,47 +96,29 @@ def main_menu() -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def admin_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("⬅️ Назад в меню", callback_data="menu")]]
-    )
 def back_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("⬅️ Назад в меню", callback_data="menu")]]
-    )
+    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад в меню", callback_data="menu")]])
 
-# ====== Команды /start ======
+def admin_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад в меню", callback_data="menu")]])
+
+# ====== Команда /start ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return
-    # сбрасываем режим обращения, чтобы не было случайных отправок
     context.user_data["awaiting_ticket"] = False
     await update.message.reply_text(TEXT_WELCOME, reply_markup=main_menu())
 
-# ====== Обработка нажатий кнопок ======
+# ====== Кнопки ======
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    # кнопки используются в личке
     if q.message.chat.type != "private":
         return
 
     if q.data == "menu":
-        # сбрасываем режим
         context.user_data["awaiting_ticket"] = False
-
-        # если было сообщение "Написать админу" — удаляем его
-        msg_id = context.user_data.pop("admin_prompt_msg_id", None)
-        if msg_id:
-            try:
-                await context.bot.delete_message(
-                    chat_id=q.message.chat_id,
-                    message_id=msg_id
-                )
-            except Exception:
-                pass
-
         await q.edit_message_text(TEXT_WELCOME, reply_markup=main_menu())
         return
 
@@ -146,8 +135,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(TEXT_ADMIN_PROMPT, reply_markup=admin_menu())
         return
 
-
-# ====== Пользователь пишет в личку ======
+# ====== Личка: сообщение пользователем ======
 async def private_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return
@@ -160,7 +148,6 @@ async def private_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(TEXT_NOT_IN_MODE, reply_markup=main_menu())
         return
 
-    # создаём тикет
     r = new_ref()
     tickets[r] = {"user_id": update.effective_user.id, "status": "open"}
     save_tickets(tickets)
@@ -173,7 +160,7 @@ async def private_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data["awaiting_ticket"] = False
     await update.message.reply_text(f"Принято. Номер обращения: #ref{r}")
 
-# ====== Админ отвечает reply в группе ======
+# ====== Группа админов: reply-ответ ======
 async def admin_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != ADMIN_CHAT_ID:
         return
@@ -186,7 +173,6 @@ async def admin_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     original = msg.reply_to_message
-
     if not original.from_user or not original.from_user.is_bot:
         return
 
@@ -211,28 +197,9 @@ async def admin_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text=f"Ответ по обращению #ref{ref}:\n\n{msg.text}"
     )
 
-    # Если хочешь совсем без служебных сообщений — скажи, уберу это подтверждение.
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"Отправлено по #ref{ref}.")
 
-# ====== Запуск ======
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(on_button))
-
-# личка: тексты
-app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, private_text_router))
-
-# группа: ответы админов reply
-app.add_handler(MessageHandler(filters.Chat(chat_id=ADMIN_CHAT_ID) & filters.TEXT, admin_reply_router))
-
-приложение.add_handler(MessageHandler(фильтры.Chat(chat_id=ADMIN_CHAT_ID) & фильтры.ТЕКСТ, admin_reply_router))
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import os
-
-def run_bot():
-    приложение.run_polling()
-
+# ====== HTTP для Render Web Service ======
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -240,10 +207,30 @@ class DummyHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"OK")
 
 def run_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("", port), DummyHandler)
+    port = int(os.environ.get("PORT", "10000"))
+    server = HTTPServer(("0.0.0.0", port), DummyHandler)
     server.serve_forever()
 
+def build_application():
+    if not TOKEN:
+        raise RuntimeError("Переменная окружения BOT_TOKEN не задана в Render (Environment).")
+
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(on_button))
+
+    app.add_handler(
+        MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, private_text_router)
+    )
+    app.add_handler(
+        MessageHandler(filters.Chat(chat_id=ADMIN_CHAT_ID) & filters.TEXT, admin_reply_router)
+    )
+    return app
+
+def run_bot():
+    app = build_application()
+    app.run_polling()
+
 if __name__ == "__main__":
-    threading.Thread(target=run_bot).start()
+    threading.Thread(target=run_bot, daemon=True).start()
     run_server()
