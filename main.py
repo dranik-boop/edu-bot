@@ -2,9 +2,7 @@ import os
 import json
 import random
 import re
-import threading
 from pathlib import Path
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -203,30 +201,14 @@ async def admin_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"Отправлено по #ref{ref}.")
 
-# ====== HTTP для Render Web Service ======
-class DummyHandler(BaseHTTPRequestHandler):
-    def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers()
-
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-
-def run_server():
-    port = int(os.environ.get("PORT", "10000"))
-    server = HTTPServer(("0.0.0.0", port), DummyHandler)
-    server.serve_forever()
-
 def build_application():
     if not TOKEN:
         raise RuntimeError("Переменная окружения BOT_TOKEN не задана в Render (Environment).")
 
     app = ApplicationBuilder().token(TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(on_button))
-
     app.add_handler(
         MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, private_text_router)
     )
@@ -236,9 +218,16 @@ def build_application():
     return app
 
 if __name__ == "__main__":
-    # веб-сервер Render запускаем в отдельном потоке
-    threading.Thread(target=run_server, daemon=True).start()
-
-    # а polling — в главном потоке
     app = build_application()
-    app.run_polling()
+
+    WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # добавим на шаге 4
+    PORT = int(os.environ.get("PORT", "10000"))
+
+    if not WEBHOOK_URL:
+        raise RuntimeError("WEBHOOK_URL не задан в Render (Environment).")
+
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_url=WEBHOOK_URL,
+    )
